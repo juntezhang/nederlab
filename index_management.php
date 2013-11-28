@@ -29,7 +29,12 @@ $url_reload_new_core;
 $url_create;
 $url_remove;
 
-$instance_dir = "/Development/apache-solr-4.4.0/example/solr/dbnl";
+$domain;
+
+$instance_dir = "/Development/apache-solr-4.4.0/example/solr/$core_new";
+
+$solr_config_file = "/Development/apache-solr-4.4.0/example/solr/dbnl/conf/solrconfig.xml";
+$solr_schema_file = "/Development/apache-solr-4.4.0/example/solr/dbnl/conf/schema.xml";
 
 #-------------------------------------------------------------------------
 # status: update, reload, delete, create
@@ -77,57 +82,28 @@ switch($server)
 {
   case 'local':  
     $domain = "http://localhost:8983/solr";
-    
-    $url_original_core = "$domain/$core_original/update";
-    $url_new_core = "$domain/$core_new/update";
-
-    $url_reload_original_core = "$domain/admin/cores?action=RELOAD&core=$core_original";
-    $url_reload_new_core = "$domain/admin/cores?action=RELOAD&core=$core_new";
-
-    $url_create = "$domain/admin/cores?action=CREATE&name=$core_new&instanceDir=$instance_dir";
-    $url_remove = "$domain/admin/cores?action=UNLOAD&core=$core_new";
   break;
   
   case 'openskos':
     $domain = "http://openskos.meertens.knaw.nl/solr";
-    
-    $url_original_core = "$domain/$core_original/update";
-    $url_new_core = "$domain/$core_new/update";
-
-    $url_reload_original_core = "$domain/admin/cores?action=RELOAD&core=$core_original";
-    $url_reload_new_core = "$domain/admin/cores?action=RELOAD&core=$core_new";
-
-    $url_create = "$domain/admin/cores?action=CREATE&name=$core_new&instanceDir=$instance_dir";
-    $url_remove = "$domain/admin/cores?action=UNLOAD&core=$core_new";  
   break;
   
   case 'production':
     $domain = "http://145.100.58.246/solr";
-    
-    $url_original_core = "$domain/$core_original/update";
-    $url_new_core = "$domain/$core_new/update";
-
-    $url_reload_original_core = "$domain/admin/cores?action=RELOAD&core=$core_original";
-    $url_reload_new_core = "$domain/admin/cores?action=RELOAD&core=$core_new";
-
-    $url_create = "$domain/admin/cores?action=CREATE&name=$core_new&instanceDir=$instance_dir";
-    $url_remove = "$domain/admin/cores?action=UNLOAD&core=$core_new";    
   break;
   
   default:
     $domain = "http://localhost:8983/solr";
-    
-    $url_original_core = "$domain/$core_original/update";
-    $url_new_core = "$domain/$core_new/update";
-
-    $url_reload_original_core = "$domain/admin/cores?action=RELOAD&core=$core_original";
-    $url_reload_new_core = "$domain/admin/cores?action=RELOAD&core=$core_new";
-
-    $url_create = "$domain/admin/cores?action=CREATE&name=$core_new&instanceDir=$instance_dir";
-    $url_remove = "$domain/admin/cores?action=UNLOAD&core=$core_new";  
 }  
+$url_original_core = "$domain/$core_original/update";
+$url_new_core = "$domain/$core_new/update";
 
-  
+$url_reload_original_core = "$domain/admin/cores?action=RELOAD&core=$core_original";
+$url_reload_new_core = "$domain/admin/cores?action=RELOAD&core=$core_new";
+
+$url_create = "$domain/admin/cores?action=CREATE&name=$core_new&instanceDir=$instance_dir&config=$solr_config_file&schema=$solr_schema_file&collection.configName=$core_new";
+$url_remove = "$domain/admin/cores?action=UNLOAD&core=$core_new";
+      
 #--------------------------------------------------------------
 # do something with Solr given the status value 
 #--------------------------------------------------------------	
@@ -182,10 +158,13 @@ switch($status)
     $url = $url_original_core . "?optimize=true";
     core_action_with_single_file($url);
   break;
-    
+  
+  # do something innocent as fall back option  
   default:
-    $url =  $url . "?commit=true";
-    core_action_with_dir($url);
+    #$url =  $url_new_core . "?commit=true";
+    #core_action_with_dir($url);
+    $url =  $url_reload_original_core;
+    core_action_with_single_file($url);    
 }
 
 function core_action_with_dir($url)
