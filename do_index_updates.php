@@ -158,7 +158,7 @@ function merge_title_and_text()
 # this function updates the dependent titles: it consists of heuristics and mappings
 function update_dependent_titles($file)
 {
-  global $solr, $author_cmdi_path, $server, $dep_titles_cmdi_path;
+  global $solr, $author_cmdi_path, $server, $dep_titles_cmdi_path, $core;
   
   $doc = read_update_file($file);
   $doc = utf8_for_xml($doc);
@@ -422,7 +422,7 @@ function update_dependent_titles($file)
 
 function update_independent_titles($file)
 {
-  global $solr, $server, $independent_titles_cmdi_path;
+  global $solr, $server, $independent_titles_cmdi_path, $core;
 
   $doc = read_update_file($file);
   $doc = utf8_for_xml($doc);
@@ -597,7 +597,7 @@ function update_independent_titles($file)
 
 function update_authors($file)
 {
-  global $solr, $core, $author_cmdi_path;
+  global $solr, $core, $author_cmdi_path, $core;
 
   $doc = read_update_file($file);
   $doc = utf8_for_xml($doc);
