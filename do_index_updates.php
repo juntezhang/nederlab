@@ -18,6 +18,7 @@ $core;
 $author_cmdi_path = "/Development/nederlab/data/cmdi2/dbnl_author";
 $dep_titles_cmdi_path = "/Development/nederlab/data/cmdi2/dbnl_doc_onzelfstandig";
 $independent_titles_cmdi_path = "/Development/nederlab/data/cmdi2/dbnl_doc";
+$independent_titles_only_cmdi_path = "/Development/nederlab/data/cmdi2/dbnl_title";
 
 if(isset($_GET["core"])) 
 {
@@ -49,6 +50,9 @@ main();
 #------------------------------------------------
 function main() 
 {
+  # I have not set this, because not all texts have a title metadata record! This is the reason why there is a separate DBNL_Tekst record type (profile)
+  #merge_title_and_text();
+  
   update_dependent_titles("/Development/nederlab/data/updates/onz_titels.xml");
   update_independent_titles("/Development/nederlab/data/updates/titels.xml");
   update_authors("/Development/nederlab/data/updates/auteurs.xml");
@@ -57,6 +61,99 @@ function main()
 #------------------------------------------------
 # Functions
 #------------------------------------------------
+
+# this function merges the full text of TEI files with the title metadata records
+function merge_title_and_text()
+{
+  global $solr, $server, $independent_titles_cmdi_path, $independent_titles_only_cmdi_path;
+  
+  $files_txt = glob("$independent_titles_cmdi_path/*.xml");
+  
+  # get rid of the _01 appendix to get the id of the title id
+  foreach ($files_txt as $file_txt) 
+  {
+    if(preg_match("/.*\/(.+)\_01.xml/", $file_txt, $matches)) 
+    {
+      try 
+      {        
+        $response = $solr->search('MdSelfLink:'.$matches[1].'', '0', '1', null, Apache_Solr_Service::METHOD_POST);
+
+        # check if it is an existing record
+        if(sizeof($response->response->docs) > 0)
+        {          
+          $doc_upd = new Apache_Solr_Document();
+          $nederl_metadata = "";
+          
+          $doc_upd->addField("MdSelfLink", $matches[1]);
+          $nederl_metadata .= " " . $matches[1];
+                   
+          foreach ($response->response->docs as $element) 
+          {
+            foreach ($element as $field => $value) 
+            {
+              # do not output old values
+              if($field == "MdSelfLink")
+              {
+                ;
+              }
+              else 
+              {
+                if(is_array($value)) 
+                {
+                  for($cnt = 0 ; $cnt < sizeof($value) ; $cnt++) {  
+                    $doc_upd->addField($field, $value[$cnt]);
+                    $nederl_metadata .= " " . $value[$cnt];
+                  }
+                }
+                else 
+                {
+                  $doc_upd->addField($field, $value);
+                  $nederl_metadata .= " " . $value;
+                }
+              }
+            }
+          }     
+              
+          # add fulltext and #pages #tokens  
+          $doc = read_update_file($file_txt);
+          $doc = utf8_for_xml($doc);          
+          $xml_str = simplexml_load_string($doc);
+
+          
+          # "new" fields to be indexed
+          $txt_content = $xml_str->xpath("//tekst_inhoud");
+          foreach ($txt_content as $txt) 
+          {
+            $doc_upd->addField("nederl_content", $txt);
+          }         
+
+          $extent_1 = $xml_str->xpath("//extent[1]");
+          $extent_2 = $xml_str->xpath("//extent[2]");
+          foreach ($extent_1 as $tokens) 
+          {
+            $doc_upd->addField("nederl_extent_tokens_order", $tokens);
+          }
+          foreach ($extent_2 as $pages) 
+          {
+            $doc_upd->addField("nederl_extent_pages_order", $tokens);
+          }
+          # add all metadata values to a single field in the index
+          $doc_upd->addField("nederl_metadata", $nederl_metadata);    
+          
+          # add the Solr document to the index
+          add_to_index($doc_upd, $solr);          
+        }                
+      }
+      catch (Exception $e) 
+      {
+        die($e->__toString());
+      }    
+    }
+  }
+
+  # commit as last to push the documents to the index
+  commit_to_index($solr);
+}
 
 # this function updates the dependent titles: it consists of heuristics and mappings
 function update_dependent_titles($file)
@@ -93,11 +190,6 @@ function update_dependent_titles($file)
               $doc_upd->addField("MdSelfLink", $val_sub);
               $nederl_metadata .= " " . $val_sub;
               
-              ##########################
-              # add not stored fields
-              ##########################
-              get_nederl_content($doc_upd, $dep_titles_cmdi_path, $val_sub);
-
               # get year of publication from index           
               foreach ($response->response->docs as $element) 
               {
@@ -122,7 +214,7 @@ function update_dependent_titles($file)
                     $nederl_metadata .= " " . $value;
                   }
                   # do not print out the old values
-                  else if(($field == "MdSelfLink") || ($field == "resourcetype") || ($field == "resourceref") || ($field == "title") || ($field == "auteur_id") || ($field == "DC-4194") || ($field == "voorvoegsel") || ($field == "DC-4195") || ($field == "titlestmt.author") || ($field == "DC-5484") || ($field == "leeftijd_bij_publicatie") || ($field == "DC-5619") || ($field == "DC-3660") || ($field == "geb_plaats") || ($field == "overl_plaats") || ($field == "vrouw") || ($field == "beroep") || ($field == "nederl_date_modified") || ($field == "nederl_content") || ($field == "nederl_metadata") || ($field == "nederl_reference")) 
+                  else if(($field == "MdSelfLink") || ($field == "resourcetype") || ($field == "resourceref") || ($field == "title") || ($field == "auteur_id") || ($field == "DC-4194") || ($field == "voorvoegsel") || ($field == "DC-4195") || ($field == "titlestmt.author") || ($field == "DC-5484") || ($field == "leeftijd_bij_publicatie") || ($field == "DC-5619") || ($field == "DC-3660") || ($field == "geb_plaats") || ($field == "overl_plaats") || ($field == "vrouw") || ($field == "beroep") || ($field == "nederl_date_modified") || ($field == "nederl_metadata") || ($field == "fulltext") || ($field == "nederl_reference")) 
                   {
                     ;
                   }
@@ -281,8 +373,25 @@ function update_dependent_titles($file)
         break;
 
         case(preg_match("/nl_referentie/", $key)) :
-          $doc_upd->addField("nederl_reference", $val_sub);
-          $nederl_metadata .= " " . $val_sub;
+          $reference = "";
+          $reference_cnt = 0;
+          foreach($val_sub_sub as $key_sub => $val_sub_sub_sub)
+          {
+            if($val_sub_sub_sub != "")
+            {
+              if($reference_cnt == 0)
+              {
+                $reference .= $val_sub_sub_sub;
+              }
+              else 
+              {
+                $reference .= " " . $val_sub_sub_sub;
+              }
+            }          
+            $reference_cnt++;
+          }
+          $doc_upd->addField("nederl_reference", $reference);
+          $nederl_metadata .= " " . $reference;
         break;  
               
         # nederl_date_modified
@@ -295,7 +404,14 @@ function update_dependent_titles($file)
     } 
     
     # add all metadata values to a single field in the index
-    $doc_upd->addField("nederl_metadata", $nederl_metadata);
+    if($core == "dbnl_metadata")
+    {
+      $doc_upd->addField("fulltext", $nederl_metadata);
+    }
+    else 
+    {
+      $doc_upd->addField("nederl_metadata", $nederl_metadata);
+    }
        
     # add the Solr document to the index
     add_to_index($doc_upd, $solr);
@@ -335,18 +451,13 @@ function update_independent_titles($file)
             {            
               $doc_upd->addField("MdSelfLink", $val_sub);
               $nederl_metadata .= " " . $val_sub;
-
-              ##########################
-              # add not stored fields
-              ##########################
-              get_nederl_content($doc_upd, $independent_titles_cmdi_path, $val_sub);
-                            
+                         
               foreach ($response->response->docs as $element) 
               {
                 foreach ($element as $field => $value) 
                 {
                   # do not output old values
-                  if(($field == "MdSelfLink") || ($field == "resourcetype") || ($field == "resourceref") || ($field == "auteur_id") || ($field == "DC-2545") || ($field == "DC-2470") || ($field == "DC-3899") || ($field == "DC-2538") || ($field == "subtitel") || ($field == "nederl_date_modified") || ($field == "nederl_reference"))
+                  if(($field == "MdSelfLink") || ($field == "resourcetype") || ($field == "resourceref") || ($field == "auteur_id") || ($field == "DC-2545") || ($field == "DC-2470") || ($field == "DC-3899") || ($field == "DC-2538") || ($field == "subtitel") || ($field == "nederl_date_modified") || ($field == "nederl_reference") || ($field == "nederl_metadata") || ($field == "fulltext"))
                   {
                     ;
                   }
@@ -437,8 +548,25 @@ function update_independent_titles($file)
         break;
 
         case(preg_match("/nl_referentie/", $key)) :
-          $doc_upd->addField("nederl_reference", $val_sub);
-          $nederl_metadata .= " " . $val_sub;
+          $reference = "";
+          $reference_cnt = 0;
+          foreach($val_sub_sub as $key_sub => $val_sub_sub_sub)
+          {
+            if($val_sub_sub_sub != "")
+            {
+              if($reference_cnt == 0)
+              {
+                $reference .= $val_sub_sub_sub;
+              }
+              else 
+              {
+                $reference .= " " . $val_sub_sub_sub;
+              }
+            }          
+            $reference_cnt++;
+          }
+          $doc_upd->addField("nederl_reference", $reference);
+          $nederl_metadata .= " " . $reference;
         break;  
                                                   
         # nederl_date_modified
@@ -450,7 +578,14 @@ function update_independent_titles($file)
       }
     }
     # add all metadata values to a single field in the index
-    $doc_upd->addField("nederl_metadata", $nederl_metadata);
+    if($core == "dbnl_metadata")
+    {
+      $doc_upd->addField("fulltext", $nederl_metadata);
+    }
+    else 
+    {
+      $doc_upd->addField("nederl_metadata", $nederl_metadata);
+    }
            
     # add the Solr document to the index
     add_to_index($doc_upd, $solr);
@@ -462,7 +597,7 @@ function update_independent_titles($file)
 
 function update_authors($file)
 {
-  global $solr, $server, $author_cmdi_path;
+  global $solr, $core, $author_cmdi_path;
 
   $doc = read_update_file($file);
   $doc = utf8_for_xml($doc);
@@ -471,11 +606,13 @@ function update_authors($file)
 
   $values = $xml_str->xpath("//doc");
 
+  $del_author_ids = array();
   foreach ($values as $val) 
   {
     $doc_upd = new Apache_Solr_Document();
     $response;
     $nederl_metadata = '';
+    $MdSelfLink = '';
     foreach ($val as $key => $val_sub) 
     {  
       switch(true)
@@ -490,19 +627,15 @@ function update_authors($file)
             if(sizeof($response->response->docs) > 0)
             {            
               $doc_upd->addField("MdSelfLink", $val_sub);
+              $MdSelfLink = $val_sub;
               $nederl_metadata .= " " . $val_sub;
-
-              ##########################
-              # add not stored fields
-              ##########################
-              get_nederl_content($doc_upd, $author_cmdi_path, $val_sub);
                             
               foreach ($response->response->docs as $element) 
               {
                 foreach ($element as $field => $value) 
                 {
                   # do not output old values or values that have become obsolete
-                  if(($field == "MdSelfLink") || ($field == "resourcetype") || ($field == "resourceref") || ($field == "DC-4195") || ($field == "DC-4194") || ($field == "voorvoegsel") || ($field == "voornaam_volledig") || ($field == "geb_datum") || ($field == "DC-5484") || ($field == "geb_plaats") || ($field == "geb_plaats_code") || ($field == "overl_datum") || ($field == "DC-5619") || ($field == "overl_plaats") || ($field == "overl_plaats_code") || ($field == "beroep") || ($field == "vrouw") || ($field == "naam_variant") || ($field == "nederl_note_editor") || ($field == "nederl_reference") || ($field == "nederl_date_modified"))
+                  if(($field == "MdSelfLink") || ($field == "resourcetype") || ($field == "resourceref") || ($field == "DC-4195") || ($field == "DC-4194") || ($field == "voorvoegsel") || ($field == "voornaam_volledig") || ($field == "geb_datum") || ($field == "DC-5484") || ($field == "geb_plaats") || ($field == "geb_plaats_code") || ($field == "overl_datum") || ($field == "DC-5619") || ($field == "overl_plaats") || ($field == "overl_plaats_code") || ($field == "beroep") || ($field == "vrouw") || ($field == "naam_variant") || ($field == "nederl_note_editor") || ($field == "nederl_reference") || ($field == "nederl_date_modified") || ($field == "nederl_metadata") || ($field == "fulltext"))
                   {
                     ;
                   }
@@ -593,7 +726,7 @@ function update_authors($file)
 
         case(preg_match("/nl_jaar_overlijden/", $key)) :
           # this heuristic can be deleted if Rob replaces field "jaar_overlijden" with DC-5619 in the editor
-          if($server == "openskos.meertens.knaw.nl")
+          if($core == "dbnl_metadata")
           {
             $doc_upd->addField("jaar_overlijden", $val_sub);                      
             $nederl_metadata .= " " . $val_sub;
@@ -666,24 +799,78 @@ function update_authors($file)
         break;     
         
         case(preg_match("/nl_referentie/", $key)) :
-          $doc_upd->addField("nederl_reference", $val_sub);
-          $nederl_metadata .= " " . $val_sub;
+          foreach ($val_sub as $key => $val_sub_sub) 
+          {
+            $reference = "";
+            $reference_cnt = 0;
+            foreach($val_sub_sub as $key_sub => $val_sub_sub_sub)
+            {
+              if($val_sub_sub_sub != "")
+              {
+                if($reference_cnt == 0)
+                {
+                  $reference .= $val_sub_sub_sub;
+                }
+                else 
+                {
+                  $reference .= " " . $val_sub_sub_sub;
+                }
+              }          
+              $reference_cnt++;
+            }
+            $doc_upd->addField("nederl_reference", $reference);
+            $nederl_metadata .= " " . $reference;
+          }
         break;  
                 
         case(preg_match("/nl_opmerkingen/", $key)) :
-          $doc_upd->addField("nederl_note_editor", $val_sub);
-          $nederl_metadata .= " " . $val_sub;
+          # Regels van Rob: Het gaat uitsluitend om de auteurs. Bij de dubbele is daar in het opmerkingen-veld een '='-teken geplaatst. Als dat teken ook nog eens vergezeld is van een of twee vraagtekens, dan is het nog niet zeker en moet dat record blijven staan.
+          if(preg_match("/^=(.+)/", $val_sub, $matches))
+          {
+            if(preg_match("/\?\?/", $matches[1]))
+            {
+              $doc_upd->addField("nederl_note_editor", $val_sub);
+              $nederl_metadata .= " " . $val_sub;            
+            }
+            else
+            {
+              # it is a duplicate record, so delete it
+              $doc_upd->addField("nederl_note_editor", $val_sub);
+              
+              array_push($del_author_ids, $MdSelfLink); 
+              continue;
+            }
+          }
+          else 
+          {
+            $doc_upd->addField("nederl_note_editor", $val_sub);
+            $nederl_metadata .= " " . $val_sub;
+          }
         break;                                        
       }    
     }
     # add all metadata values to a single field in the index
-    $doc_upd->addField("nederl_metadata", $nederl_metadata);
-
+    if($core == "dbnl_metadata")
+    {
+      $doc_upd->addField("fulltext", $nederl_metadata);
+    }
+    else 
+    {
+      $doc_upd->addField("nederl_metadata", $nederl_metadata);
+    }
+    
     # add the Solr document to the index
     add_to_index($doc_upd, $solr);        
   }
   # commit as last to push the documents to the index
   commit_to_index($solr);    
+  
+  # delete duplicate IDs
+  foreach ($del_author_ids as $id)
+  { 
+    $solr->deleteById($id); 
+  }
+  commit_to_index($solr);  
 }    
 
 function convert_date_to_iso($date)
